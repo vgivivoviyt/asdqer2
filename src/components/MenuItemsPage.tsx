@@ -131,7 +131,8 @@ const MenuItemsPage: React.FC = () => {
         selling_price: formData.selling_price,
         loyalty_mode: formData.loyalty_mode,
         loyalty_settings: loyaltySettings,
-        is_active: formData.is_active
+        is_active: formData.is_active,
+        image_url: formData.image_url || undefined
       });
 
       await fetchMenuItems();
@@ -172,7 +173,8 @@ const MenuItemsPage: React.FC = () => {
         selling_price: formData.selling_price,
         loyalty_mode: formData.loyalty_mode,
         loyalty_settings: loyaltySettings,
-        is_active: formData.is_active
+        is_active: formData.is_active,
+        image_url: formData.image_url || undefined
       });
 
       await fetchMenuItems();

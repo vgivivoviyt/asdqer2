@@ -153,14 +153,15 @@ const SignupPage: React.FC = () => {
 
       if (result.error) {
         setError(result.error);
+        setLoading(false);
         return;
       }
 
       // Handle payment based on selected plan
       if (selectedPlan === 'trial') {
         // For trial, redirect directly to dashboard
-        navigate('/login', { 
-          state: { 
+        navigate('/login', {
+          state: {
             message: 'Account created successfully! Please sign in to start your free trial.',
             email: formData.email
           }
@@ -170,8 +171,7 @@ const SignupPage: React.FC = () => {
         setShowCustomCheckout(true);
       }
     } catch (err: any) {
-      setError('Failed to complete signup. Please try signing in if your account was created.');
-    } finally {
+      setError(err.message || 'Failed to complete signup. Please try again.');
       setLoading(false);
     }
   };

@@ -111,38 +111,61 @@ export class CampaignService {
     return data;
   }
 
-  static async createCampaign(campaign: Partial<Campaign>): Promise<Campaign> {
+  static async createCampaign(restaurantId: string, campaign: Partial<Campaign>): Promise<Campaign> {
     const { data: userData } = await supabase.auth.getUser();
+
+    const campaignData: any = {
+      restaurant_id: restaurantId,
+      title: campaign.name,
+      description: campaign.description || '',
+      campaign_type: campaign.type || 'one_time',
+      target_audience: campaign.audience_type || 'all',
+      notification_channels: { [campaign.primary_channel || 'whatsapp']: true },
+      start_date: new Date().toISOString(),
+      is_active: campaign.status === 'sending' || campaign.status === 'scheduled',
+      created_by: userData?.user?.id,
+    };
+
+    if (campaign.scheduled_at) {
+      campaignData.scheduled_send_time = campaign.scheduled_at;
+      campaignData.send_immediately = false;
+    } else {
+      campaignData.send_immediately = campaign.type === 'one_time';
+    }
 
     const { data, error } = await supabase
       .from('campaigns')
-      .insert({
-        ...campaign,
-        created_by: userData?.user?.id,
-      })
+      .insert(campaignData)
       .select()
       .single();
 
     if (error) throw new Error(error.message);
-
-    await this.logAuditAction(data.id, 'created', userData?.user?.id || null, {});
 
     return data;
   }
 
-  static async updateCampaign(campaignId: string, updates: Partial<Campaign>): Promise<Campaign> {
-    const { data: userData } = await supabase.auth.getUser();
+  static async updateCampaign(restaurantId: string, campaignId: string, updates: Partial<Campaign>): Promise<Campaign> {
+    const updateData: any = {};
+
+    if (updates.name) updateData.title = updates.name;
+    if (updates.description !== undefined) updateData.description = updates.description;
+    if (updates.type) updateData.campaign_type = updates.type;
+    if (updates.audience_type) updateData.target_audience = updates.audience_type;
+    if (updates.status) updateData.is_active = updates.status === 'sending' || updates.status === 'scheduled';
+    if (updates.scheduled_at) {
+      updateData.scheduled_send_time = updates.scheduled_at;
+      updateData.send_immediately = false;
+    }
 
     const { data, error } = await supabase
       .from('campaigns')
-      .update(updates)
+      .update(updateData)
       .eq('id', campaignId)
+      .eq('restaurant_id', restaurantId)
       .select()
       .single();
 
     if (error) throw new Error(error.message);
-
-    await this.logAuditAction(campaignId, 'edited', userData?.user?.id || null, updates);
 
     return data;
   }

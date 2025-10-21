@@ -11,6 +11,7 @@ import {
 import { supabase } from '../lib/supabase';
 import { CustomerService } from '../services/customerService';
 import { RewardService } from '../services/rewardService';
+import { CampaignService } from '../services/campaignService';
 import CustomerOnboarding from './CustomerOnboarding';
 import CustomerRedemptionModal from './CustomerRedemptionModal';
 import LoadingBar from './LoadingBar';
@@ -74,6 +75,7 @@ const CustomerWallet: React.FC<CustomerWalletProps> = ({ isDemo = false, onClose
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [rewards, setRewards] = useState<Reward[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [activePromos, setActivePromos] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<'home' | 'rewards' | 'history' | 'profile'>('home');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -137,13 +139,15 @@ const CustomerWallet: React.FC<CustomerWalletProps> = ({ isDemo = false, onClose
       setShowOnboarding(false);
       
       if (restaurant) {
-        const [rewardsData, transactionsData] = await Promise.all([
+        const [rewardsData, transactionsData, promosData] = await Promise.all([
           RewardService.getAvailableRewards(restaurant.id, customerData.id),
-          CustomerService.getCustomerTransactions(restaurant.id, customerData.id)
+          CustomerService.getCustomerTransactions(restaurant.id, customerData.id),
+          CampaignService.getActivePromosForCustomer(restaurant.id, customerData.id).catch(() => [])
         ]);
-        
+
         setRewards(rewardsData);
         setTransactions(transactionsData);
+        setActivePromos(promosData);
       }
     } catch (err: any) {
       console.error('Error completing onboarding:', err);
@@ -494,6 +498,35 @@ const CustomerWallet: React.FC<CustomerWalletProps> = ({ isDemo = false, onClose
                 </div>
               )}
             </div>
+
+            {/* Active Promotions */}
+            {activePromos.length > 0 && (
+              <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-3xl p-6 border border-green-200 shadow-sm">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-900">Active Promotions</h3>
+                  <Bell className="h-5 w-5 text-green-600" />
+                </div>
+
+                <div className="space-y-3">
+                  {activePromos.map((promo) => (
+                    <div key={promo.id} className="bg-white rounded-lg p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-mono font-bold text-lg text-green-600">{promo.code}</span>
+                        <span className="text-xs px-2 py-1 rounded-full bg-green-100 text-green-700">
+                          {promo.discount_type === 'percentage' ? `${promo.discount_value}% OFF` : `AED ${promo.discount_value} OFF`}
+                        </span>
+                      </div>
+                      {promo.min_spend > 0 && (
+                        <p className="text-xs text-gray-600">Min. spend: AED {promo.min_spend}</p>
+                      )}
+                      <p className="text-xs text-gray-500 mt-1">
+                        Valid until: {new Date(promo.valid_until).toLocaleDateString()}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -530,8 +563,14 @@ const CustomerWallet: React.FC<CustomerWalletProps> = ({ isDemo = false, onClose
                             </span>
                           </div>
                         </div>
-                        <div className="w-16 h-16 bg-gradient-to-br from-[#E6A85C] to-[#E85A9B] rounded-xl flex items-center justify-center">
-                          <Gift className="h-8 w-8 text-white" />
+                        <div className="w-16 h-16 rounded-xl overflow-hidden flex-shrink-0">
+                          {reward.image_url ? (
+                            <img src={reward.image_url} alt={reward.name} className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full bg-gradient-to-br from-[#E6A85C] to-[#E85A9B] flex items-center justify-center">
+                              <Gift className="h-8 w-8 text-white" />
+                            </div>
+                          )}
                         </div>
                       </div>
                       
