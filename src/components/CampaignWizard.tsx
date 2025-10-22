@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   ArrowLeft, ArrowRight, Check, Users, MessageSquare, Gift,
   Calendar, Eye, Send, AlertCircle, Mail, Smartphone, Bell,
-  Target, Tag, Clock, Filter, Percent, DollarSign, Save, X
+  Target, Tag, Clock, Filter, Percent, DollarSign, Save, X, Copy
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -15,11 +15,11 @@ type Step = 'basic' | 'audience' | 'message' | 'offer' | 'schedule' | 'preview';
 interface CampaignFormData {
   name: string;
   description: string;
-  type: 'one_time' | 'scheduled' | 'recurring' | 'ab_test';
-  status: 'draft' | 'scheduled';
+  type: 'one_time' | 'scheduled' | 'recurring';
+  status: 'draft' | 'scheduled' | 'sending';
   primary_channel: 'whatsapp' | 'email' | 'sms' | 'push';
   fallback_channel?: 'whatsapp' | 'email' | 'sms' | 'push';
-  audience_type: 'all' | 'tagged' | 'last_order_date' | 'wallet_status' | 'custom_filter';
+  audience_type: 'all' | 'tagged' | 'last_order_date' | 'wallet_status';
   audience_filter: any;
   estimated_audience_size: number;
   message_subject?: string;
@@ -35,6 +35,8 @@ interface CampaignFormData {
   recurring_config?: any;
 }
 
+const STORAGE_KEY = 'campaign_wizard_draft';
+
 const CampaignWizard: React.FC = () => {
   const { campaignId } = useParams();
   const navigate = useNavigate();
@@ -44,19 +46,30 @@ const CampaignWizard: React.FC = () => {
   const [error, setError] = useState('');
   const [estimatedAudience, setEstimatedAudience] = useState(0);
   const [availableTags, setAvailableTags] = useState<any[]>([]);
-  const [availableRewards, setAvailableRewards] = useState<any[]>([]);
+  const [includePromo, setIncludePromo] = useState(false);
 
-  const [formData, setFormData] = useState<CampaignFormData>({
-    name: '',
-    description: '',
-    type: 'one_time',
-    status: 'draft',
-    primary_channel: 'whatsapp',
-    audience_type: 'all',
-    audience_filter: {},
-    estimated_audience_size: 0,
-    message_template: '',
-    message_variables: {},
+  const [formData, setFormData] = useState<CampaignFormData>(() => {
+    // Try to restore from localStorage
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved && !campaignId) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error('Failed to parse saved campaign:', e);
+      }
+    }
+    return {
+      name: '',
+      description: '',
+      type: 'one_time',
+      status: 'draft',
+      primary_channel: 'whatsapp',
+      audience_type: 'all',
+      audience_filter: {},
+      estimated_audience_size: 0,
+      message_template: '',
+      message_variables: {},
+    };
   });
 
   const steps: { id: Step; label: string; icon: any }[] = [
@@ -69,6 +82,13 @@ const CampaignWizard: React.FC = () => {
   ];
 
   const currentStepIndex = steps.findIndex(s => s.id === currentStep);
+
+  // Save to localStorage on every form change
+  useEffect(() => {
+    if (!campaignId) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(formData));
+    }
+  }, [formData, campaignId]);
 
   useEffect(() => {
     if (restaurant) {
@@ -86,12 +106,8 @@ const CampaignWizard: React.FC = () => {
     if (!restaurant) return;
 
     try {
-      const [tags, rewards] = await Promise.all([
-        CampaignService.getCustomerTags(restaurant.id),
-        RewardService.getRewards(restaurant.id),
-      ]);
+      const tags = await CampaignService.getAllTags(restaurant.id);
       setAvailableTags(tags);
-      setAvailableRewards(rewards);
     } catch (error: any) {
       console.error('Error loading data:', error);
     }
@@ -110,6 +126,7 @@ const CampaignWizard: React.FC = () => {
       setFormData(prev => ({ ...prev, estimated_audience_size: size }));
     } catch (error: any) {
       console.error('Error calculating audience:', error);
+      setEstimatedAudience(0);
     }
   };
 
@@ -125,7 +142,7 @@ const CampaignWizard: React.FC = () => {
         break;
       case 'audience':
         if (estimatedAudience === 0) {
-          setError('No customers match the selected criteria');
+          setError('No customers match the selected criteria. Please adjust your filters or add customers first.');
           return false;
         }
         break;
@@ -184,6 +201,7 @@ const CampaignWizard: React.FC = () => {
         await CampaignService.createCampaign(restaurant.id, campaignData);
       }
 
+      localStorage.removeItem(STORAGE_KEY);
       navigate('/dashboard/campaigns');
     } catch (error: any) {
       setError(error.message || 'Failed to save campaign');
@@ -205,33 +223,38 @@ const CampaignWizard: React.FC = () => {
         status: formData.type === 'one_time' ? 'sending' as const : 'scheduled' as const,
       };
 
-      if (campaignId) {
-        await CampaignService.updateCampaign(restaurant.id, campaignId, campaignData);
-      } else {
-        const campaign = await CampaignService.createCampaign(restaurant.id, campaignData);
+      const campaign = campaignId
+        ? await CampaignService.updateCampaign(restaurant.id, campaignId, campaignData)
+        : await CampaignService.createCampaign(restaurant.id, campaignData);
 
-        if (formData.promo_code) {
-          await CampaignService.createPromoCode(restaurant.id, {
-            campaign_id: campaign.id,
-            code: formData.promo_code,
-            discount_type: formData.promo_discount_type || 'percentage',
-            discount_value: formData.promo_discount_value || 0,
-            min_spend: formData.promo_min_spend || 0,
-            max_uses: formData.promo_max_uses,
-            max_uses_per_customer: 1,
-            order_type: 'all',
-            valid_from: new Date().toISOString(),
-            valid_until: new Date(Date.now() + (formData.promo_valid_days || 30) * 24 * 60 * 60 * 1000).toISOString(),
-          });
-        }
+      if (includePromo && formData.promo_code) {
+        await CampaignService.createPromoCode({
+          campaign_id: campaign.id,
+          restaurant_id: restaurant.id,
+          code: formData.promo_code,
+          discount_type: formData.promo_discount_type || 'percentage',
+          discount_value: formData.promo_discount_value || 0,
+          min_spend: formData.promo_min_spend || 0,
+          max_uses: formData.promo_max_uses,
+          max_uses_per_customer: 1,
+          order_type: 'all',
+          valid_from: new Date().toISOString(),
+          valid_until: new Date(Date.now() + (formData.promo_valid_days || 30) * 24 * 60 * 60 * 1000).toISOString(),
+        });
       }
 
+      localStorage.removeItem(STORAGE_KEY);
       navigate('/dashboard/campaigns');
     } catch (error: any) {
       setError(error.message || 'Failed to schedule campaign');
     } finally {
       setLoading(false);
     }
+  };
+
+  const insertVariable = (variable: string) => {
+    const template = formData.message_template;
+    setFormData({ ...formData, message_template: template + `{{${variable}}}` });
   };
 
   const renderBasicInfo = () => (
@@ -294,26 +317,6 @@ const CampaignWizard: React.FC = () => {
           </select>
         </div>
       </div>
-
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Fallback Channel (Optional)
-        </label>
-        <select
-          value={formData.fallback_channel || ''}
-          onChange={(e) => setFormData({ ...formData, fallback_channel: e.target.value as any || undefined })}
-          className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#E6A85C] focus:border-transparent"
-        >
-          <option value="">None</option>
-          <option value="whatsapp">WhatsApp</option>
-          <option value="email">Email</option>
-          <option value="sms">SMS</option>
-          <option value="push">Push Notification</option>
-        </select>
-        <p className="text-xs text-gray-500 mt-2">
-          If primary channel fails, send via this channel
-        </p>
-      </div>
     </div>
   );
 
@@ -324,13 +327,13 @@ const CampaignWizard: React.FC = () => {
           Select Audience
         </label>
         <div className="space-y-3">
-          <label className="flex items-center p-4 border-2 border-gray-200 rounded-xl cursor-pointer hover:border-[#E6A85C] transition-colors">
+          <label className="flex items-start p-4 border-2 border-gray-200 rounded-xl cursor-pointer hover:border-[#E6A85C] transition-colors">
             <input
               type="radio"
               name="audience"
               checked={formData.audience_type === 'all'}
               onChange={() => setFormData({ ...formData, audience_type: 'all', audience_filter: {} })}
-              className="mr-3"
+              className="mt-1 mr-3"
             />
             <div>
               <p className="font-medium text-gray-900">All Customers</p>
@@ -338,48 +341,13 @@ const CampaignWizard: React.FC = () => {
             </div>
           </label>
 
-          <label className="flex items-center p-4 border-2 border-gray-200 rounded-xl cursor-pointer hover:border-[#E6A85C] transition-colors">
-            <input
-              type="radio"
-              name="audience"
-              checked={formData.audience_type === 'tagged'}
-              onChange={() => setFormData({ ...formData, audience_type: 'tagged' })}
-              className="mr-3"
-            />
-            <div className="flex-1">
-              <p className="font-medium text-gray-900">By Tags</p>
-              <p className="text-sm text-gray-500">Target customers with specific tags</p>
-              {formData.audience_type === 'tagged' && (
-                <div className="mt-3">
-                  <select
-                    multiple
-                    value={formData.audience_filter.tags || []}
-                    onChange={(e) => {
-                      const tags = Array.from(e.target.selectedOptions, option => option.value);
-                      setFormData({
-                        ...formData,
-                        audience_filter: { ...formData.audience_filter, tags }
-                      });
-                    }}
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg"
-                    size={4}
-                  >
-                    {availableTags.map(tag => (
-                      <option key={tag.id} value={tag.id}>{tag.name}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
-            </div>
-          </label>
-
-          <label className="flex items-center p-4 border-2 border-gray-200 rounded-xl cursor-pointer hover:border-[#E6A85C] transition-colors">
+          <label className="flex items-start p-4 border-2 border-gray-200 rounded-xl cursor-pointer hover:border-[#E6A85C] transition-colors">
             <input
               type="radio"
               name="audience"
               checked={formData.audience_type === 'last_order_date'}
-              onChange={() => setFormData({ ...formData, audience_type: 'last_order_date' })}
-              className="mr-3"
+              onChange={() => setFormData({ ...formData, audience_type: 'last_order_date', audience_filter: { days_since_last_order: 30 } })}
+              className="mt-1 mr-3"
             />
             <div className="flex-1">
               <p className="font-medium text-gray-900">Inactive Customers</p>
@@ -402,13 +370,13 @@ const CampaignWizard: React.FC = () => {
             </div>
           </label>
 
-          <label className="flex items-center p-4 border-2 border-gray-200 rounded-xl cursor-pointer hover:border-[#E6A85C] transition-colors">
+          <label className="flex items-start p-4 border-2 border-gray-200 rounded-xl cursor-pointer hover:border-[#E6A85C] transition-colors">
             <input
               type="radio"
               name="audience"
               checked={formData.audience_type === 'wallet_status'}
-              onChange={() => setFormData({ ...formData, audience_type: 'wallet_status' })}
-              className="mr-3"
+              onChange={() => setFormData({ ...formData, audience_type: 'wallet_status', audience_filter: { min_points: 0 } })}
+              className="mt-1 mr-3"
             />
             <div className="flex-1">
               <p className="font-medium text-gray-900">By Wallet Balance</p>
@@ -434,7 +402,7 @@ const CampaignWizard: React.FC = () => {
                       audience_filter: { ...formData.audience_filter, max_points: e.target.value ? parseInt(e.target.value) : undefined }
                     })}
                     className="px-3 py-2 border border-gray-200 rounded-lg"
-                    placeholder="Max points"
+                    placeholder="Max points (optional)"
                     min="0"
                   />
                 </div>
@@ -481,12 +449,25 @@ const CampaignWizard: React.FC = () => {
           value={formData.message_template}
           onChange={(e) => setFormData({ ...formData, message_template: e.target.value })}
           className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#E6A85C] focus:border-transparent font-mono text-sm"
-          placeholder="Hi {{name}}, we have a special offer for you! Use code {{promo_code}} to get {{discount}}% off your next order."
+          placeholder="Write your message here..."
           rows={8}
         />
-        <p className="text-xs text-gray-500 mt-2">
-          Available variables: <code>{'{{name}}'}</code>, <code>{'{{points}}'}</code>, <code>{'{{promo_code}}'}</code>, <code>{'{{discount}}'}</code>
-        </p>
+        <div className="mt-2">
+          <p className="text-xs text-gray-600 mb-2">Insert variables:</p>
+          <div className="flex flex-wrap gap-2">
+            {['name', 'points', 'restaurant_name', 'promo_code'].map(variable => (
+              <button
+                key={variable}
+                type="button"
+                onClick={() => insertVariable(variable)}
+                className="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded-lg border border-gray-300 flex items-center gap-1"
+              >
+                <Copy className="h-3 w-3" />
+                {variable}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
@@ -497,10 +478,10 @@ const CampaignWizard: React.FC = () => {
           )}
           <p className="text-gray-700 whitespace-pre-wrap">
             {formData.message_template
-              .replace('{{name}}', 'John Doe')
-              .replace('{{points}}', '250')
-              .replace('{{promo_code}}', formData.promo_code || 'SAVE20')
-              .replace('{{discount}}', (formData.promo_discount_value || 20).toString())
+              .replace(/\{\{name\}\}/g, 'John Doe')
+              .replace(/\{\{points\}\}/g, '250')
+              .replace(/\{\{restaurant_name\}\}/g, restaurant?.name || 'Your Restaurant')
+              .replace(/\{\{promo_code\}\}/g, formData.promo_code || 'SAVE20')
             }
           </p>
         </div>
@@ -510,42 +491,20 @@ const CampaignWizard: React.FC = () => {
 
   const renderOfferConfiguration = () => (
     <div className="space-y-6">
-      <div className="flex items-center gap-3 mb-4">
+      <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-xl">
         <input
           type="checkbox"
           id="include_promo"
-          checked={!!formData.promo_code}
-          onChange={(e) => {
-            if (!e.target.checked) {
-              setFormData({
-                ...formData,
-                promo_code: undefined,
-                promo_discount_type: undefined,
-                promo_discount_value: undefined,
-                promo_min_spend: undefined,
-                promo_max_uses: undefined,
-                promo_valid_days: undefined,
-              });
-            } else {
-              setFormData({
-                ...formData,
-                promo_code: '',
-                promo_discount_type: 'percentage',
-                promo_discount_value: 10,
-                promo_min_spend: 0,
-                promo_max_uses: undefined,
-                promo_valid_days: 30,
-              });
-            }
-          }}
-          className="w-4 h-4 text-[#E6A85C] border-gray-300 rounded focus:ring-[#E6A85C]"
+          checked={includePromo}
+          onChange={(e) => setIncludePromo(e.target.checked)}
+          className="w-5 h-5 text-[#E6A85C] border-gray-300 rounded focus:ring-[#E6A85C]"
         />
-        <label htmlFor="include_promo" className="text-sm font-medium text-gray-700">
-          Include Promo Code with this campaign
+        <label htmlFor="include_promo" className="text-sm font-medium text-gray-700 cursor-pointer">
+          Include a promo code with this campaign
         </label>
       </div>
 
-      {formData.promo_code !== undefined && (
+      {includePromo ? (
         <>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -553,7 +512,7 @@ const CampaignWizard: React.FC = () => {
             </label>
             <input
               type="text"
-              value={formData.promo_code}
+              value={formData.promo_code || ''}
               onChange={(e) => setFormData({ ...formData, promo_code: e.target.value.toUpperCase() })}
               className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#E6A85C] focus:border-transparent uppercase"
               placeholder="SAVE20"
@@ -566,7 +525,7 @@ const CampaignWizard: React.FC = () => {
                 Discount Type
               </label>
               <select
-                value={formData.promo_discount_type}
+                value={formData.promo_discount_type || 'percentage'}
                 onChange={(e) => setFormData({ ...formData, promo_discount_type: e.target.value as any })}
                 className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#E6A85C] focus:border-transparent"
               >
@@ -579,30 +538,25 @@ const CampaignWizard: React.FC = () => {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Discount Value
               </label>
-              <div className="relative">
-                <input
-                  type="number"
-                  value={formData.promo_discount_value}
-                  onChange={(e) => setFormData({ ...formData, promo_discount_value: parseFloat(e.target.value) })}
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#E6A85C] focus:border-transparent pr-10"
-                  min="0"
-                  step={formData.promo_discount_type === 'percentage' ? '1' : '0.01'}
-                />
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500">
-                  {formData.promo_discount_type === 'percentage' ? <Percent className="h-4 w-4" /> : <DollarSign className="h-4 w-4" />}
-                </div>
-              </div>
+              <input
+                type="number"
+                value={formData.promo_discount_value || 10}
+                onChange={(e) => setFormData({ ...formData, promo_discount_value: parseFloat(e.target.value) })}
+                className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#E6A85C] focus:border-transparent"
+                min="0"
+                step={formData.promo_discount_type === 'percentage' ? '1' : '0.01'}
+              />
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Minimum Spend
+                Minimum Spend (AED)
               </label>
               <input
                 type="number"
-                value={formData.promo_min_spend}
+                value={formData.promo_min_spend || 0}
                 onChange={(e) => setFormData({ ...formData, promo_min_spend: parseFloat(e.target.value) })}
                 className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#E6A85C] focus:border-transparent"
                 min="0"
@@ -612,39 +566,23 @@ const CampaignWizard: React.FC = () => {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Max Uses (Optional)
+                Valid for (Days)
               </label>
               <input
                 type="number"
-                value={formData.promo_max_uses || ''}
-                onChange={(e) => setFormData({ ...formData, promo_max_uses: e.target.value ? parseInt(e.target.value) : undefined })}
+                value={formData.promo_valid_days || 30}
+                onChange={(e) => setFormData({ ...formData, promo_valid_days: parseInt(e.target.value) })}
                 className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#E6A85C] focus:border-transparent"
-                placeholder="Unlimited"
                 min="1"
               />
             </div>
           </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Valid for (Days)
-            </label>
-            <input
-              type="number"
-              value={formData.promo_valid_days}
-              onChange={(e) => setFormData({ ...formData, promo_valid_days: parseInt(e.target.value) })}
-              className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#E6A85C] focus:border-transparent"
-              min="1"
-            />
-          </div>
         </>
-      )}
-
-      {!formData.promo_code && (
+      ) : (
         <div className="text-center py-12 bg-gray-50 rounded-xl border-2 border-dashed border-gray-300">
           <Gift className="h-12 w-12 text-gray-400 mx-auto mb-3" />
-          <p className="text-gray-600">No promo code attached to this campaign</p>
-          <p className="text-sm text-gray-500 mt-1">Check the box above to add a promotional offer</p>
+          <p className="text-gray-600">No promo code for this campaign</p>
+          <p className="text-sm text-gray-500 mt-1">Check the box above to add one</p>
         </div>
       )}
     </div>
@@ -657,7 +595,7 @@ const CampaignWizard: React.FC = () => {
           <Send className="h-12 w-12 text-blue-600 mx-auto mb-3" />
           <h3 className="font-semibold text-blue-900 mb-2">Send Immediately</h3>
           <p className="text-sm text-blue-700">
-            This campaign will be sent as soon as you confirm in the next step
+            This campaign will be queued for sending as soon as you confirm in the next step
           </p>
         </div>
       ) : formData.type === 'scheduled' ? (
@@ -676,52 +614,16 @@ const CampaignWizard: React.FC = () => {
             Campaign will be sent at the specified date and time
           </p>
         </div>
-      ) : (
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Recurring Pattern
-            </label>
-            <select
-              value={formData.recurring_config?.pattern || 'daily'}
-              onChange={(e) => setFormData({
-                ...formData,
-                recurring_config: { ...formData.recurring_config, pattern: e.target.value }
-              })}
-              className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#E6A85C] focus:border-transparent"
-            >
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Start Date
-            </label>
-            <input
-              type="date"
-              value={formData.recurring_config?.start_date || ''}
-              onChange={(e) => setFormData({
-                ...formData,
-                recurring_config: { ...formData.recurring_config, start_date: e.target.value }
-              })}
-              className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#E6A85C] focus:border-transparent"
-              min={new Date().toISOString().split('T')[0]}
-            />
-          </div>
-        </div>
-      )}
+      ) : null}
 
       <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
         <div className="flex items-start gap-3">
           <AlertCircle className="h-5 w-5 text-yellow-600 flex-shrink-0 mt-0.5" />
           <div>
-            <p className="text-sm font-medium text-yellow-900">Important</p>
+            <p className="text-sm font-medium text-yellow-900">Channel Configuration Required</p>
             <p className="text-sm text-yellow-700 mt-1">
-              Make sure your channel integration (WhatsApp, Email, SMS) is properly configured before sending.
-              Campaigns sent to customers without consent will be skipped.
+              Make sure you've configured your {formData.primary_channel} provider settings in Channel Settings before sending.
+              Campaigns will only be sent to customers who have consented to receive messages.
             </p>
           </div>
         </div>
@@ -735,30 +637,30 @@ const CampaignWizard: React.FC = () => {
         <h3 className="font-semibold text-gray-900 mb-4">Campaign Summary</h3>
 
         <div className="space-y-3">
-          <div className="flex justify-between">
-            <span className="text-gray-600">Campaign Name:</span>
+          <div className="flex justify-between py-2 border-b border-gray-100">
+            <span className="text-gray-600">Name:</span>
             <span className="font-medium text-gray-900">{formData.name}</span>
           </div>
-          <div className="flex justify-between">
+          <div className="flex justify-between py-2 border-b border-gray-100">
             <span className="text-gray-600">Type:</span>
-            <span className="font-medium text-gray-900">{formData.type}</span>
+            <span className="font-medium text-gray-900 capitalize">{formData.type.replace('_', ' ')}</span>
           </div>
-          <div className="flex justify-between">
+          <div className="flex justify-between py-2 border-b border-gray-100">
             <span className="text-gray-600">Channel:</span>
-            <span className="font-medium text-gray-900">{formData.primary_channel}</span>
+            <span className="font-medium text-gray-900 capitalize">{formData.primary_channel}</span>
           </div>
-          <div className="flex justify-between">
+          <div className="flex justify-between py-2 border-b border-gray-100">
             <span className="text-gray-600">Audience:</span>
             <span className="font-medium text-gray-900">{estimatedAudience} customers</span>
           </div>
-          {formData.promo_code && (
-            <div className="flex justify-between">
+          {includePromo && formData.promo_code && (
+            <div className="flex justify-between py-2 border-b border-gray-100">
               <span className="text-gray-600">Promo Code:</span>
               <span className="font-medium text-gray-900">{formData.promo_code}</span>
             </div>
           )}
           {formData.scheduled_at && (
-            <div className="flex justify-between">
+            <div className="flex justify-between py-2">
               <span className="text-gray-600">Scheduled:</span>
               <span className="font-medium text-gray-900">
                 {new Date(formData.scheduled_at).toLocaleString()}
@@ -773,23 +675,25 @@ const CampaignWizard: React.FC = () => {
         {formData.message_subject && (
           <p className="font-medium text-gray-900 mb-2">{formData.message_subject}</p>
         )}
-        <p className="text-gray-700 whitespace-pre-wrap">
-          {formData.message_template
-            .replace('{{name}}', 'John Doe')
-            .replace('{{points}}', '250')
-            .replace('{{promo_code}}', formData.promo_code || 'SAVE20')
-            .replace('{{discount}}', (formData.promo_discount_value || 20).toString())
-          }
-        </p>
+        <div className="bg-gray-50 p-4 rounded-lg">
+          <p className="text-gray-700 whitespace-pre-wrap">
+            {formData.message_template
+              .replace(/\{\{name\}\}/g, 'John Doe')
+              .replace(/\{\{points\}\}/g, '250')
+              .replace(/\{\{restaurant_name\}\}/g, restaurant?.name || 'Your Restaurant')
+              .replace(/\{\{promo_code\}\}/g, formData.promo_code || 'SAVE20')
+            }
+          </p>
+        </div>
       </div>
 
       <div className="bg-green-50 border border-green-200 rounded-xl p-4">
         <div className="flex items-start gap-3">
-          <CheckCircle className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
+          <Check className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
           <div>
             <p className="text-sm font-medium text-green-900">Ready to Send</p>
             <p className="text-sm text-green-700 mt-1">
-              Your campaign is configured and ready. Click &quot;Schedule Campaign&quot; to proceed.
+              Your campaign is configured and ready. Click "Schedule Campaign" to proceed.
             </p>
           </div>
         </div>
@@ -802,7 +706,12 @@ const CampaignWizard: React.FC = () => {
       <div className="max-w-4xl mx-auto px-4">
         <div className="mb-6">
           <button
-            onClick={() => navigate('/dashboard/campaigns')}
+            onClick={() => {
+              if (confirm('Are you sure? Any unsaved changes will be lost.')) {
+                localStorage.removeItem(STORAGE_KEY);
+                navigate('/dashboard/campaigns');
+              }
+            }}
             className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
           >
             <ArrowLeft className="h-4 w-4" />
@@ -903,7 +812,7 @@ const CampaignWizard: React.FC = () => {
                   ) : (
                     <>
                       <Send className="h-4 w-4" />
-                      {formData.type === 'one_time' ? 'Send Now' : 'Schedule Campaign'}
+                      {formData.type === 'one_time' ? 'Send Campaign' : 'Schedule Campaign'}
                     </>
                   )}
                 </button>

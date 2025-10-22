@@ -116,22 +116,23 @@ export class CampaignService {
 
     const campaignData: any = {
       restaurant_id: restaurantId,
-      title: campaign.name,
+      name: campaign.name || 'Untitled Campaign',
       description: campaign.description || '',
-      campaign_type: campaign.type || 'one_time',
-      target_audience: campaign.audience_type || 'all',
-      notification_channels: { [campaign.primary_channel || 'whatsapp']: true },
-      start_date: new Date().toISOString(),
-      is_active: campaign.status === 'sending' || campaign.status === 'scheduled',
+      type: campaign.type || 'one_time',
+      status: campaign.status || 'draft',
+      primary_channel: campaign.primary_channel || 'whatsapp',
+      fallback_channel: campaign.fallback_channel,
+      audience_type: campaign.audience_type || 'all',
+      audience_filter: campaign.audience_filter || {},
+      estimated_audience_size: campaign.estimated_audience_size || 0,
+      message_subject: campaign.message_subject,
+      message_template: campaign.message_template || '',
+      message_variables: campaign.message_variables || {},
+      scheduled_at: campaign.scheduled_at,
+      recurring_config: campaign.recurring_config,
+      ab_test_config: campaign.ab_test_config,
       created_by: userData?.user?.id,
     };
-
-    if (campaign.scheduled_at) {
-      campaignData.scheduled_send_time = campaign.scheduled_at;
-      campaignData.send_immediately = false;
-    } else {
-      campaignData.send_immediately = campaign.type === 'one_time';
-    }
 
     const { data, error } = await supabase
       .from('campaigns')
@@ -147,15 +148,20 @@ export class CampaignService {
   static async updateCampaign(restaurantId: string, campaignId: string, updates: Partial<Campaign>): Promise<Campaign> {
     const updateData: any = {};
 
-    if (updates.name) updateData.title = updates.name;
+    if (updates.name !== undefined) updateData.name = updates.name;
     if (updates.description !== undefined) updateData.description = updates.description;
-    if (updates.type) updateData.campaign_type = updates.type;
-    if (updates.audience_type) updateData.target_audience = updates.audience_type;
-    if (updates.status) updateData.is_active = updates.status === 'sending' || updates.status === 'scheduled';
-    if (updates.scheduled_at) {
-      updateData.scheduled_send_time = updates.scheduled_at;
-      updateData.send_immediately = false;
-    }
+    if (updates.type !== undefined) updateData.type = updates.type;
+    if (updates.status !== undefined) updateData.status = updates.status;
+    if (updates.primary_channel !== undefined) updateData.primary_channel = updates.primary_channel;
+    if (updates.fallback_channel !== undefined) updateData.fallback_channel = updates.fallback_channel;
+    if (updates.audience_type !== undefined) updateData.audience_type = updates.audience_type;
+    if (updates.audience_filter !== undefined) updateData.audience_filter = updates.audience_filter;
+    if (updates.estimated_audience_size !== undefined) updateData.estimated_audience_size = updates.estimated_audience_size;
+    if (updates.message_subject !== undefined) updateData.message_subject = updates.message_subject;
+    if (updates.message_template !== undefined) updateData.message_template = updates.message_template;
+    if (updates.message_variables !== undefined) updateData.message_variables = updates.message_variables;
+    if (updates.scheduled_at !== undefined) updateData.scheduled_at = updates.scheduled_at;
+    if (updates.recurring_config !== undefined) updateData.recurring_config = updates.recurring_config;
 
     const { data, error } = await supabase
       .from('campaigns')
