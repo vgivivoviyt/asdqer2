@@ -147,6 +147,8 @@ function App() {
             <Route path="campaigns" element={<CampaignsPage />} />
             <Route path="campaigns/create" element={<CampaignWizard />} />
             <Route path="campaigns/:campaignId/edit" element={<CampaignWizard />} />
+            <Route path="campaigns/:campaignId" element={<CampaignWizard />} />
+
             <Route path="campaigns/settings" element={<CampaignSettings />} />
             <Route path="menu-items" element={<MenuItemsPage />} />
             <Route path="loyalty-config" element={<LoyaltyConfigPage />} />
